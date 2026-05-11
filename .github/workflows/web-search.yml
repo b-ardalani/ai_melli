@@ -392,11 +392,12 @@ jobs:
           # =============================================
           #  Unified Search
           # =============================================
-          def search(query, max_results, search_type="general", safe_search="moderate", lang="auto"):
+          def search(query, max_results, search_type="general", safe_search="moderate", lang="auto", deep=False):
               """Unified search with multiple fallback methods."""
               
               if deep:
                   max_results = min(max_results * 3, 50)
+              print(f"Deep search: {deep}, adjusted max: {max_results}")
               
               all_results = []
               seen_urls = set()
