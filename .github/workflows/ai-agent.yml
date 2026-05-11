@@ -1,39 +1,27 @@
 # ============================================================
-# 🤖 Polination AI Studio — GitHub Action
+# 🎨 Polination AI — Image Generation
 # ============================================================
-# تولید تصویر و متن با هوش مصنوعی Polination
-# قابلیت‌ها: تولید تصویر، بهبود خودکار پرامپت، تولید متن، گالری HTML
+# تولید تصویر با هوش مصنوعی Polination
 # ============================================================
 
-name: "🤖 Polination AI Studio"
+name: "🎨 Image Generation"
 
 on:
   workflow_dispatch:
     inputs:
-      mode:
-        description: "حالت عملیات"
-        required: true
-        default: "image"
-        type: choice
-        options:
-          - image
-          - text
-          - image_enhanced
-          - batch_image
-
       prompt:
-        description: "پرامپت اصلی (به انگلیسی بنویسید بهترین نتیجه رو می‌گیرید)"
+        description: "Prompt (English recommended)"
         required: true
         type: string
 
       negative_prompt:
-        description: "پرامپت منفی (چه چیزهایی نباشند)"
+        description: "Negative prompt (what to avoid)"
         required: false
         default: ""
         type: string
 
       model:
-        description: "مدل AI"
+        description: "AI Model"
         required: true
         default: "flux"
         type: choice
@@ -48,31 +36,31 @@ on:
           - any-dark
 
       width:
-        description: "عرض تصویر (پیکسل)"
+        description: "Width (px)"
         required: false
         default: "1024"
         type: string
 
       height:
-        description: "ارتفاع تصویر (پیکسل)"
+        description: "Height (px)"
         required: false
         default: "1024"
         type: string
 
       num_images:
-        description: "تعداد تصاویر (۱ تا ۱۰)"
+        description: "Number of images (1-10)"
         required: false
         default: "1"
         type: string
 
       seed:
-        description: "سید تصویر (خالی = تصادفی)"
+        description: "Seed (empty = random)"
         required: false
         default: ""
         type: string
 
-      enhance_prompt:
-        description: "بهبود خودکار پرامپت با AI"
+      nologo:
+        description: "Remove watermark"
         required: false
         default: "true"
         type: choice
@@ -80,19 +68,8 @@ on:
           - "true"
           - "false"
 
-      text_model:
-        description: "مدل متن‌سازی (برای حالت text)"
-        required: false
-        default: "openai"
-        type: choice
-        options:
-          - openai
-          - mistral
-          - llama
-          - claude
-
       upload_method:
-        description: "نحوه آپلود"
+        description: "Upload Method"
         required: true
         default: "repository"
         type: choice
@@ -101,28 +78,10 @@ on:
           - release
 
       release_tag:
-        description: "تگ ریلیز (خالی = خودکار)"
+        description: "Release Tag (empty = auto)"
         required: false
         default: ""
         type: string
-
-      remove_logo:
-        description: "حذف لوگو از تصاویر"
-        required: false
-        default: "true"
-        type: choice
-        options:
-          - "true"
-          - "false"
-
-      generate_gallery:
-        description: "ساخت صفحه گالری HTML"
-        required: false
-        default: "true"
-        type: choice
-        options:
-          - "true"
-          - "false"
 
 permissions:
   contents: write
@@ -131,603 +90,140 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  ai-studio:
+  generate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      # ---- ۱. آماده‌سازی ----
-      - name: "📥 کلون ریپازیتوری"
+      - name: "📥 Checkout"
         uses: actions/checkout@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: "🔧 نصب پیش‌نیازها"
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y jq curl imagemagick
+      - name: "🔧 Install tools"
+        run: sudo apt-get update -qq && sudo apt-get install -y jq
 
-      # ---- ۲. بهبود پرامپت با AI ----
-      - name: "🧠 بهبود خودکار پرامپت"
-        id: enhance
-        if: github.event.inputs.enhance_prompt == 'true'
+      # ======== Generate Images ========
+      - name: "🎨 Generate Images"
+        id: gen
         shell: bash
         run: |
-          echo "::group::🧠 بهبود پرامپت با Polination Text AI"
-
-          ORIGINAL_PROMPT="${{ github.event.inputs.prompt }}"
+          PROMPT="${{ github.event.inputs.prompt }}"
           NEGATIVE="${{ github.event.inputs.negative_prompt }}"
-          MODE="${{ github.event.inputs.mode }}"
-
-          # ساخت پرامپت بهبود بر اساس حالت
-          if [[ "$MODE" == "image" || "$MODE" == "image_enhanced" || "$MODE" == "batch_image" ]]; then
-            ENHANCE_INSTRUCTION="You are a master AI image prompt engineer. Improve this prompt for AI image generation. Return ONLY the improved prompt in English. No explanations. Make it detailed with style, lighting, composition, mood, and quality descriptors."
-          elif [[ "$MODE" == "text" ]]; then
-            ENHANCE_INSTRUCTION="You are a helpful assistant. The user will give you a prompt. Improve it to be more detailed and specific. Return ONLY the improved prompt. No explanations."
-          fi
-
-          NEGATIVE_PART=""
-          if [ -n "$NEGATIVE" ]; then
-            NEGATIVE_PART=" Negative prompt to avoid: $NEGATIVE"
-          fi
-
-          FULL_PROMPT="User prompt: $ORIGINAL_PROMPT.$NEGATIVE_PART"
-
-          echo "Sending prompt to Polination Text AI for enhancement..."
-
-          ENHANCED=$(curl -s --max-time 30 \
-            "https://text.pollinations.ai/" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"messages\": [
-                {\"role\": \"system\", \"content\": \"$ENHANCE_INSTRUCTION\"},
-                {\"role\": \"user\", \"content\": \"$FULL_PROMPT\"}
-              ],
-              \"model\": \"openai\",
-              \"temperature\": 0.7
-            }" | jq -r '. // empty')
-
-          if [ -z "$ENHANCED" ] || [ "$ENHANCED" = "null" ]; then
-            echo "Enhancement failed, using original prompt"
-            echo "enhanced_prompt=$ORIGINAL_PROMPT" >> "$GITHUB_OUTPUT"
-            echo "was_enhanced=false" >> "$GITHUB_OUTPUT"
-          else
-            # پاک‌سازی نتیجه
-            ENHANCED=$(echo "$ENHANCED" | tr -d '\n' | sed 's/^"//;s/"$//')
-            echo "✅ پرامپت بهبود یافت!"
-            echo "Original : $ORIGINAL_PROMPT"
-            echo "Enhanced  : $ENHANCED"
-            echo "enhanced_prompt=$ENHANCED" >> "$GITHUB_OUTPUT"
-            echo "was_enhanced=true" >> "$GITHUB_OUTPUT"
-          fi
-
-          echo "::endgroup::"
-
-      - name: "📍 تنظیم پرامپت نهایی"
-        id: final_prompt
-        shell: bash
-        run: |
-          if [[ "${{ steps.enhance.outputs.was_enhanced }}" == "true" ]]; then
-            echo "prompt=${{ steps.enhance.outputs.enhanced_prompt }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "prompt=${{ github.event.inputs.prompt }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      # ---- ۳. تولید تصویر ----
-      - name: "🎨 تولید تصاویر AI"
-        id: generate_images
-        if: github.event.inputs.mode == 'image' || github.event.inputs.mode == 'image_enhanced' || github.event.inputs.mode == 'batch_image'
-        shell: bash
-        run: |
-          echo "::group::🎨 تولید تصاویر با Polination"
-
-          PROMPT="${{ steps.final_prompt.outputs.prompt }}"
           MODEL="${{ github.event.inputs.model }}"
           WIDTH="${{ github.event.inputs.width }}"
           HEIGHT="${{ github.event.inputs.height }}"
           NUM="${{ github.event.inputs.num_images }}"
           SEED="${{ github.event.inputs.seed }}"
-          NOLOGO="${{ github.event.inputs.remove_logo }}"
+          NOLOGO="${{ github.event.inputs.nologo }}"
 
-          # اعتبارسنجی تعداد
-          if ! [[ "$NUM" =~ ^[0-9]+$ ]] || [[ "$NUM" -lt 1 ]]; then NUM=1; fi
-          if [[ "$NUM" -gt 10 ]]; then NUM=10; fi
+          # Validation
+          [[ ! "$NUM" =~ ^[0-9]+$ || "$NUM" -lt 1 ]] && NUM=1
+          [[ "$NUM" -gt 10 ]] && NUM=10
+          [[ ! "$WIDTH" =~ ^[0-9]+$ ]] && WIDTH=1024
+          [[ ! "$HEIGHT" =~ ^[0-9]+$ ]] && HEIGHT=1024
 
-          # اعتبارسنجی ابعاد
-          if ! [[ "$WIDTH" =~ ^[0-9]+$ ]]; then WIDTH=1024; fi
-          if ! [[ "$HEIGHT" =~ ^[0-9]+$ ]]; then HEIGHT=1024; fi
+          mkdir -p output
 
-          mkdir -p ai_output/images
+          TS=$(date +%Y%m%d_%H%M%S)
+          SAFE=$(echo "$PROMPT" | head -c 50 | tr ' ' '_' | tr -cd 'a-zA-Z0-9_-')
 
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          SAFE_NAME=$(echo "$PROMPT" | head -c 60 | tr ' ' '_' | tr -cd 'a-zA-Z0-9_-')
+          # Build negative prompt param
+          NEG_PARAM=""
+          if [ -n "$NEGATIVE" ]; then
+            NEG_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$NEGATIVE")
+            NEG_PARAM="&negative=${NEG_ENC}"
+          fi
 
-          SUCCESS=0
-          FAILED=0
-          FILE_LIST=""
+          OK=0
+          FAIL=0
 
           for i in $(seq 1 "$NUM"); do
-            echo "━━━ تصویر $i از $NUM ━━━"
+            echo "::group::Image $i / $NUM"
 
-            # سید: اگر مشخص نشده، تصادفی
             if [ -n "$SEED" ]; then
-              CURRENT_SEED=$((SEED + i - 1))
+              CSEED=$((SEED + i - 1))
             else
-              CURRENT_SEED=$RANDOM
+              CSEED=$RANDOM
             fi
 
-            OUTFILE="ai_output/images/${SAFE_NAME}_${TIMESTAMP}_${i}.png"
+            OUT="output/${SAFE}_${TS}_${i}.png"
 
-            ENCODED_PROMPT=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$PROMPT'''))")
+            # Safe URL encode with python
+            ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$PROMPT")
 
-            URL="https://image.pollinations.ai/prompt/${ENCODED_PROMPT}?width=${WIDTH}&height=${HEIGHT}&model=${MODEL}&nologo=${NOLOGO}&seed=${CURRENT_SEED}&nofeed=true"
+            URL="https://image.pollinations.ai/prompt/${ENC}?width=${WIDTH}&height=${HEIGHT}&model=${MODEL}&nologo=${NOLOGO}&seed=${CSEED}&nofeed=true${NEG_PARAM}"
 
-            echo "📥 در حال دانلود..."
+            echo "URL: $URL"
+            echo "Downloading..."
 
-            HTTP_CODE=$(curl -L --max-time 120 -w "%{http_code}" -o "$OUTFILE" "$URL")
+            HTTP=$(curl -L --max-time 180 -w "%{http_code}" -o "$OUT" "$URL" 2>&1)
 
-            if [[ "$HTTP_CODE" == "200" ]] && [[ -f "$OUTFILE" ]] && [[ $(stat -c%s "$OUTFILE") -gt 1000 ]]; then
-              FILESIZE=$(du -h "$OUTFILE" | cut -f1)
-              echo "✅ موفق! حجم: $FILESIZE"
-              SUCCESS=$((SUCCESS + 1))
-              FILE_LIST="${FILE_LIST}${OUTFILE}\n"
+            if [[ "$HTTP" == "200" ]] && [[ -f "$OUT" ]] && [[ $(stat -c%s "$OUT") -gt 500 ]]; then
+              SZ=$(du -h "$OUT" | cut -f1)
+              echo "✅ Done! Size: $SZ"
+              OK=$((OK + 1))
             else
-              echo "❌ شکست (HTTP $HTTP_CODE)"
-              rm -f "$OUTFILE"
-              FAILED=$((FAILED + 1))
+              echo "❌ Failed (HTTP $HTTP)"
+              rm -f "$OUT"
+              FAIL=$((FAIL + 1))
             fi
 
-            # صبر بین درخواست‌ها برای جلوگیری از ریتم لیمیت
-            if [[ $i -lt $NUM ]]; then
-              echo "⏳ صبر ۳ ثانیه..."
+            echo "::endgroup::"
+
+            if [[ $i -lt "$NUM" ]]; then
               sleep 3
             fi
           done
 
-          echo ""
-          echo "📊 خلاصه: $SUCCESS موفق، $FAILED شکست"
+          echo "success=$OK" >> "$GITHUB_OUTPUT"
+          echo "failed=$FAIL" >> "$GITHUB_OUTPUT"
 
-          echo "success_count=$SUCCESS" >> "$GITHUB_OUTPUT"
-          echo "failed_count=$FAILED" >> "$GITHUB_OUTPUT"
-
-          echo "::endgroup::"
-
-      # ---- ۴. تولید متن ----
-      - name: "📝 تولید متن AI"
-        id: generate_text
-        if: github.event.inputs.mode == 'text'
+      # ======== Summary ========
+      - name: "📊 Summary"
+        if: always()
         shell: bash
         run: |
-          echo "::group::📝 تولید متن با Polination"
+          echo "╔═══════════════════════════════════════╗"
+          echo "║   Image Generation Complete           ║"
+          echo "╠═══════════════════════════════════════╣"
+          echo "║ Model    : ${{ github.event.inputs.model }}"
+          echo "║ Images   : ${{ steps.gen.outputs.success }} ok, ${{ steps.gen.outputs.failed }} fail"
+          echo "║ Upload   : ${{ github.event.inputs.upload_method }}"
+          echo "╚═══════════════════════════════════════╝"
 
-          PROMPT="${{ steps.final_prompt.outputs.prompt }}"
-          MODEL="${{ github.event.inputs.text_model }}"
-
-          mkdir -p ai_output/text
-
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-
-          echo "🤖 در حال تولید متن با مدل $MODEL..."
-
-          RESPONSE=$(curl -s --max-time 120 \
-            "https://text.pollinations.ai/" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"messages\": [
-                {\"role\": \"system\", \"content\": \"You are a creative and helpful AI assistant. Write detailed, well-structured, and engaging content. Use markdown formatting when appropriate.\"},
-                {\"role\": \"user\", \"content\": \"$PROMPT\"}
-              ],
-              \"model\": \"$MODEL\",
-              \"temperature\": 0.8
-            }")
-
-          # استخراج متن از پاسخ JSON
-          GENERATED_TEXT=$(echo "$RESPONSE" | jq -r '. // empty')
-
-          if [ -z "$GENERATED_TEXT" ] || [ "$GENERATED_TEXT" = "null" ]; then
-            echo "❌ خطا در تولید متن"
-            echo "Raw response: $RESPONSE"
-            exit 1
-          fi
-
-          # ذخیره فایل متنی
-          OUTPUT_FILE="ai_output/text/generated_${TIMESTAMP}.md"
-          echo "# Generated by Polination AI Studio" > "$OUTPUT_FILE"
-          echo "" >> "$OUTPUT_FILE"
-          echo "**Model:** $MODEL" >> "$OUTPUT_FILE"
-          echo "**Date:** $(date '+%Y-%m-%d %H:%M:%S')" >> "$OUTPUT_FILE"
-          echo "**Prompt:** $PROMPT" >> "$OUTPUT_FILE"
-          echo "" >> "$OUTPUT_FILE"
-          echo "---" >> "$OUTPUT_FILE"
-          echo "" >> "$OUTPUT_FILE"
-          echo "$GENERATED_TEXT" >> "$OUTPUT_FILE"
-
-          # ذخیره خام JSON
-          echo "$RESPONSE" | jq '.' > "ai_output/text/raw_${TIMESTAMP}.json"
-
-          CHAR_COUNT=$(echo "$GENERATED_TEXT" | wc -c)
-          WORD_COUNT=$(echo "$GENERATED_TEXT" | wc -w)
-
-          echo "✅ متن تولید شد!"
-          echo "📝 تعداد کاراکتر: $CHAR_COUNT"
-          echo "📝 تعداد کلمه: $WORD_COUNT"
-          echo "📁 فایل: $OUTPUT_FILE"
-
-          echo "output_file=$OUTPUT_FILE" >> "$GITHUB_OUTPUT"
-          echo "char_count=$CHAR_COUNT" >> "$GITHUB_OUTPUT"
-          echo "word_count=$WORD_COUNT" >> "$GITHUB_OUTPUT"
-
-          echo "::endgroup::"
-
-      # ---- ۵. ساخت گالری HTML ----
-      - name: "🖼️ ساخت گالری HTML"
-        id: gallery
-        if: github.event.inputs.generate_gallery == 'true' && (github.event.inputs.mode == 'image' || github.event.inputs.mode == 'image_enhanced' || github.event.inputs.mode == 'batch_image')
-        shell: bash
-        run: |
-          echo "::group::🖼️ ساخت صفحه گالری"
-
-          OUTPUT_DIR="ai_output/gallery"
-          mkdir -p "$OUTPUT_DIR"
-
-          TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-          PROMPT="${{ steps.final_prompt.outputs.prompt }}"
-          ORIGINAL="${{ github.event.inputs.prompt }}"
-          MODEL="${{ github.event.inputs.model }}"
-          WAS_ENHANCED="${{ steps.enhance.outputs.was_enhanced }}"
-          SUCCESS="${{ steps.generate_images.outputs.success_count }}"
-          FAILED="${{ steps.generate_images.outputs.failed_count }}"
-
-          # ساخت لیست تصاویر
-          IMAGES_HTML=""
-          for img in ai_output/images/*.png; do
-            if [ -f "$img" ]; then
-              IMG_NAME=$(basename "$img")
-              IMG_SIZE=$(du -h "$img" | cut -f1)
-              # ایجاد مسیر نسبی برای ریلیز
-              IMAGES_HTML+="          <div class=\"card\">
-            <img src=\"images/${IMG_NAME}\" alt=\"${PROMPT}\" loading=\"lazy\">
-            <div class=\"card-info\">
-              <span class=\"filename\">${IMG_NAME}</span>
-              <span class=\"filesize\">${IMG_SIZE}</span>
-            </div>
-          </div>
-          "
-            fi
-          done
-
-          cat > "$OUTPUT_DIR/index.html" << HTMLEOF
-          <!DOCTYPE html>
-          <html lang="fa" dir="rtl">
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Polination AI Studio — Gallery</title>
-            <style>
-              * { margin: 0; padding: 0; box-sizing: border-box; }
-
-              body {
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
-                color: #e0e0e0;
-                min-height: 100vh;
-                padding: 2rem;
-              }
-
-              .container { max-width: 1200px; margin: 0 auto; }
-
-              .header {
-                text-align: center;
-                margin-bottom: 3rem;
-                padding: 2rem;
-                background: rgba(255,255,255,0.05);
-                border-radius: 20px;
-                backdrop-filter: blur(10px);
-                border: 1px solid rgba(255,255,255,0.1);
-              }
-
-              .header h1 {
-                font-size: 2.5rem;
-                background: linear-gradient(90deg, #a18cd1, #fbc2eb, #a6c1ee);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                margin-bottom: 0.5rem;
-              }
-
-              .header .subtitle { color: #888; font-size: 1rem; }
-
-              .meta-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 1rem;
-                margin-bottom: 2rem;
-              }
-
-              .meta-card {
-                background: rgba(255,255,255,0.05);
-                padding: 1rem 1.5rem;
-                border-radius: 12px;
-                border: 1px solid rgba(255,255,255,0.08);
-              }
-
-              .meta-card .label {
-                font-size: 0.75rem;
-                color: #888;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                margin-bottom: 0.3rem;
-              }
-
-              .meta-card .value { font-size: 0.95rem; color: #ddd; }
-
-              .prompt-box {
-                background: rgba(255,255,255,0.03);
-                padding: 1.5rem;
-                border-radius: 12px;
-                border: 1px solid rgba(255,255,255,0.08);
-                margin-bottom: 2rem;
-              }
-
-              .prompt-box .label {
-                font-size: 0.75rem;
-                color: #888;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                margin-bottom: 0.5rem;
-              }
-
-              .prompt-box .original { color: #999; margin-bottom: 0.5rem; font-size: 0.9rem; }
-              .prompt-box .enhanced { color: #a18cd1; font-size: 1rem; }
-
-              .stats {
-                display: flex;
-                gap: 1rem;
-                margin-bottom: 2rem;
-              }
-
-              .stat-badge {
-                padding: 0.5rem 1.5rem;
-                border-radius: 50px;
-                font-weight: 600;
-                font-size: 0.9rem;
-              }
-
-              .stat-success { background: rgba(76,175,80,0.2); color: #81c784; }
-              .stat-failed { background: rgba(244,67,54,0.2); color: #ef9a9a; }
-
-              .gallery {
-                display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-                gap: 1.5rem;
-              }
-
-              .card {
-                background: rgba(255,255,255,0.05);
-                border-radius: 16px;
-                overflow: hidden;
-                border: 1px solid rgba(255,255,255,0.08);
-                transition: transform 0.3s, box-shadow 0.3s;
-              }
-
-              .card:hover {
-                transform: translateY(-5px);
-                box-shadow: 0 20px 40px rgba(0,0,0,0.3);
-              }
-
-              .card img {
-                width: 100%;
-                display: block;
-                background: #1a1a2e;
-              }
-
-              .card-info {
-                padding: 0.8rem 1rem;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-              }
-
-              .filename {
-                font-size: 0.8rem;
-                color: #aaa;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-                max-width: 200px;
-              }
-
-              .filesize { font-size: 0.8rem; color: #666; }
-
-              .footer {
-                text-align: center;
-                margin-top: 3rem;
-                padding: 1rem;
-                color: #555;
-                font-size: 0.85rem;
-              }
-
-              .footer a { color: #a18cd1; text-decoration: none; }
-              .footer a:hover { text-decoration: underline; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <h1>Polination AI Studio</h1>
-                <p class="subtitle">Generated with AI • ${TIMESTAMP}</p>
-              </div>
-
-              <div class="meta-grid">
-                <div class="meta-card">
-                  <div class="label">Model</div>
-                  <div class="value">${MODEL}</div>
-                </div>
-                <div class="meta-card">
-                  <div class="label">Date</div>
-                  <div class="value">${TIMESTAMP}</div>
-                </div>
-                <div class="meta-card">
-                  <div class="label">Mode</div>
-                  <div class="value">${{ github.event.inputs.mode }}</div>
-                </div>
-                <div class="meta-card">
-                  <div class="label">Dimensions</div>
-                  <div class="value">${{ github.event.inputs.width }} × ${{ github.event.inputs.height }}</div>
-                </div>
-              </div>
-
-              <div class="prompt-box">
-                <div class="label">Prompt</div>
-                <div class="original">Original: ${ORIGINAL}</div>
-                HTMLEOF
-
-          if [[ "$WAS_ENHANCED" == "true" ]]; then
-            cat >> "$OUTPUT_DIR/index.html" << HTMLEOF
-                <div class="enhanced">Enhanced: ${PROMPT}</div>
-            HTMLEOF
-          else
-            cat >> "$OUTPUT_DIR/index.html" << HTMLEOF
-                <div class="enhanced">${PROMPT}</div>
-            HTMLEOF
-          fi
-
-          cat >> "$OUTPUT_DIR/index.html" << HTMLEOF
-              </div>
-
-              <div class="stats">
-                <span class="stat-badge stat-success">Success: ${SUCCESS}</span>
-                <span class="stat-badge stat-failed">Failed: ${FAILED}</span>
-              </div>
-
-              <div class="gallery">
-                ${IMAGES_HTML}
-              </div>
-
-              <div class="footer">
-                <p>Powered by <a href="https://pollinations.ai" target="_blank">Pollinations.ai</a> • GitHub Action by AI Studio</p>
-              </div>
-            </div>
-          </body>
-          </html>
-          HTMLEOF
-
-          # کپی تصاویر به پوشه گالری
-          mkdir -p "$OUTPUT_DIR/images"
-          cp ai_output/images/*.png "$OUTPUT_DIR/images/" 2>/dev/null || true
-
-          echo "✅ گالری ساخته شد!"
-
-          echo "::endgroup::"
-
-      # ---- ۶. ساخت README ----
-      - name: "📋 ساخت README خروجی"
-        if: always() && steps.generate_images.outcome == 'success'
-        shell: bash
-        run: |
-          mkdir -p ai_output
-
-          cat > ai_output/README.md << 'EOF'
-          # Polination AI Studio — Output
-
-          | Key | Value |
-          |-----|-------|
-          | **Date** | $(date '+%Y-%m-%d %H:%M:%S') |
-          | **Model** | ${{ github.event.inputs.model }} |
-          | **Prompt** | ${{ steps.final_prompt.outputs.prompt }} |
-          | **Mode** | ${{ github.event.inputs.mode }} |
-          | **Enhanced** | ${{ steps.enhance.outputs.was_enhanced }} |
-
-          ## Generated Files
-
-          EOF
-
-          echo "📁 **images/** — Generated AI images" >> ai_output/README.md
-          if [[ -d ai_output/text ]]; then
-            echo "📝 **text/** — Generated AI text" >> ai_output/README.md
-          fi
-          if [[ -d ai_output/gallery ]]; then
-            echo "🖼️ **gallery/** — HTML gallery page" >> ai_output/README.md
-          fi
-
-      # ---- ۷. آپلود به ریپازیتوری ----
-      - name: "📦 آپلود به ریپازیتوری"
+      # ======== Upload to Repository ========
+      - name: "📦 Push to Repository"
         if: github.event.inputs.upload_method == 'repository'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          if [ -d "ai_output" ]; then
-            # حذف قدیمی‌ها
-            rm -rf ai_output_old 2>/dev/null || true
-            mv ai_output ai_output_old 2>/dev/null || true
+          git add output/
+          git commit -m "Image: ${{ github.event.inputs.prompt }} [skip ci]" || echo "No changes"
+          git push
 
-            # اگر خروجی جدید وجود دارد
-            if [ -d "ai_output_old" ]; then
-              mv ai_output_old ai_output
-            fi
-
-            git add ai_output/ 2>/dev/null || true
-
-            PROMPT_SHORT=$(echo "${{ steps.final_prompt.outputs.prompt }}" | head -c 60)
-
-            git commit -m "AI Studio: ${PROMPT_SHORT} [skip ci]" || echo "Nothing to commit"
-
-            git push
-            echo "✅ فایل‌ها به ریپازیتوری آپلود شد"
-          else
-            echo "⚠️ خروجی برای آپلود وجود ندارد"
-          fi
-
-      # ---- ۸. آپلود به ریلیز ----
-      - name: "🚀 آپلود به GitHub Releases"
+      # ======== Upload to Release ========
+      - name: "🚀 Upload to Release"
         if: github.event.inputs.upload_method == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.release_tag != '' && github.event.inputs.release_tag || format('ai-studio-{0}', github.run_number) }}
-          name: "AI Studio Release — ${{ github.event.inputs.model }}"
+          tag_name: ${{ github.event.inputs.release_tag != '' && github.event.inputs.release_tag || format('img-{0}', github.run_number) }}
+          name: "AI Image — ${{ github.event.inputs.model }}"
           body: |
-            ## Polination AI Studio Output
-
-            | Detail | Value |
-            |--------|-------|
-            | **Model** | ${{ github.event.inputs.model }} |
-            | **Prompt** | ${{ steps.final_prompt.outputs.prompt }} |
-            | **Original Prompt** | ${{ github.event.inputs.prompt }} |
-            | **Enhanced** | ${{ steps.enhance.outputs.was_enhanced }} |
-            | **Mode** | ${{ github.event.inputs.mode }} |
-            | **Dimensions** | ${{ github.event.inputs.width }}×${{ github.event.inputs.height }} |
-            | **Date** | ${{ steps.get_date.outputs.date }} |
-
-            ### Stats
-            - Success: ${{ steps.generate_images.outputs.success_count }}
-            - Failed: ${{ steps.generate_images.outputs.failed_count }}
-          files: |
-            ai_output/images/*
-            ai_output/text/*
-            ai_output/gallery/**/*
+            ## Generated Images
+            - **Model:** ${{ github.event.inputs.model }}
+            - **Prompt:** ${{ github.event.inputs.prompt }}
+            - **Negative:** ${{ github.event.inputs.negative_prompt }}
+            - **Size:** ${{ github.event.inputs.width }}x${{ github.event.inputs.height }}
+            - **Success:** ${{ steps.gen.outputs.success }}
+            - **Failed:** ${{ steps.gen.outputs.failed }}
+          files: output/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ---- ۹. خلاصه ----
-      - name: "📊 خلاصه نهایی"
-        if: always()
-        shell: bash
-        run: |
-          echo "╔══════════════════════════════════════╗"
-          echo "║   Polination AI Studio — Complete    ║"
-          echo "╠══════════════════════════════════════╣"
-          echo "║ Mode      : ${{ github.event.inputs.mode }}"
-          echo "║ Model     : ${{ github.event.inputs.model }}"
-          echo "║ Enhanced  : ${{ steps.enhance.outputs.was_enhanced }}"
-          echo "║ Images OK : ${{ steps.generate_images.outputs.success_count }}"
-          echo "║ Images FL : ${{ steps.generate_images.outputs.failed_count }}"
-          echo "║ Upload    : ${{ github.event.inputs.upload_method }}"
-          echo "╚══════════════════════════════════════╝"
-
-      # ---- ۱۰. پاکسازی ----
-      - name: "🧹 پاکسازی"
-        if: always()
-        shell: bash
-        run: |
-          rm -rf temp_dl ai_output
+      # ======== Cleanup ========
+      - name: "🧹 Cleanup"
+        if: github.event.inputs.upload_method == 'repository'
+        run: rm -rf output
